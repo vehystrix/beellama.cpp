@@ -459,32 +459,30 @@ struct server_slot {
         SRV_TRC(" - saving prompt with length %d, total state size = %.3f MiB (draft: %.3f MiB)\n",
                 (int) prompt.tokens.size(), cur_size / (1024.0 * 1024.0), cur_size_dft / (1024.0 * 1024.0));
 
-        server_prompt_data data;
-        try {
-            data.main.resize(cur_size_tgt);
-            data.drft.resize(cur_size_dft);
-            data.spec = speculative_state;
-        } catch (const std::bad_alloc &) {
-            return nullptr;
-        }
-
         if (!prompt_cache.cache_dir.empty()) {
-            auto * cur = prompt_cache.alloc(prompt, cur_size_tgt, cur_size_dft);
+            // The disk path serializes with LLAMA_STATE_SEQ_FLAGS_NONE (both the get_data calls below and restore), so its size must be queried with that same flag; SELF_CONTAINED produces a different KVarN record layout and undercounts.
+            const size_t disk_size_tgt = llama_state_seq_get_size_ext(ctx_tgt, id, LLAMA_STATE_SEQ_FLAGS_NONE);
+            const size_t disk_size_dft = ctx_dft_state ? llama_state_seq_get_size_ext(ctx_dft_state, id, LLAMA_STATE_SEQ_FLAGS_NONE) : 0;
+            if (disk_size_tgt == 0 || (ctx_dft_state && disk_size_dft == 0)) {
+                return nullptr;
+            }
+
+            auto * cur = prompt_cache.alloc(prompt, disk_size_tgt, disk_size_dft);
             if (cur == nullptr) {
                 return nullptr;
             }
 
             const size_t n_tgt = llama_state_seq_get_data_ext(
-                    ctx_tgt, cur->data.mapping, cur_size_tgt, id, LLAMA_STATE_SEQ_FLAGS_NONE);
-            if (n_tgt != cur_size_tgt) {
-                SLT_WRN(*this, "failed to save target prompt state: expected %zu bytes, wrote %zu\n", cur_size_tgt, n_tgt);
+                    ctx_tgt, cur->data.mapping, disk_size_tgt, id, LLAMA_STATE_SEQ_FLAGS_NONE);
+            if (n_tgt != disk_size_tgt) {
+                SLT_WRN(*this, "failed to save target prompt state: expected %zu bytes, wrote %zu\n", disk_size_tgt, n_tgt);
                 prompt_cache.discard(cur);
                 return nullptr;
             }
             const size_t n_dft = ctx_dft_state ? llama_state_seq_get_data_ext(
-                    ctx_dft_state, cur->data.mapping + cur_size_tgt, cur_size_dft, id, LLAMA_STATE_SEQ_FLAGS_NONE) : 0;
-            if (ctx_dft_state && n_dft != cur_size_dft) {
-                SLT_WRN(*this, "failed to save draft prompt state: expected %zu bytes, wrote %zu\n", cur_size_dft, n_dft);
+                    ctx_dft_state, cur->data.mapping + disk_size_tgt, disk_size_dft, id, LLAMA_STATE_SEQ_FLAGS_NONE) : 0;
+            if (ctx_dft_state && n_dft != disk_size_dft) {
+                SLT_WRN(*this, "failed to save draft prompt state: expected %zu bytes, wrote %zu\n", disk_size_dft, n_dft);
                 prompt_cache.discard(cur);
                 return nullptr;
             }
@@ -493,6 +491,15 @@ struct server_slot {
                 return nullptr;
             }
             return cur;
+        }
+
+        server_prompt_data data;
+        try {
+            data.main.resize(cur_size_tgt);
+            data.drft.resize(cur_size_dft);
+            data.spec = speculative_state;
+        } catch (const std::bad_alloc &) {
+            return nullptr;
         }
 
         const size_t saved_tgt = llama_state_seq_get_data_ext(
