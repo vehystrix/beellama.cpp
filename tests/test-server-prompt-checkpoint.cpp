@@ -107,7 +107,7 @@ static void prompt_cache_load_target_success_draft_failure_is_atomic() {
         },
     };
 
-    assert(!cache.load(current, requested, 0, 1, io));
+    assert(!cache.load(current, requested, nullptr, nullptr, nullptr, -1, true, false, 0, 0.9f, 0, 1, io));
     assert(!restored_main && !restored_draft);
     assert(!cleared_main && !cleared_draft);
     assert(main_state == 90 && draft_state == 80);
@@ -204,7 +204,7 @@ static void prompt_cache_ranks_safe_restorable_prefix_before_lexical_lcp() {
         },
     };
 
-    assert(cache.load(current, requested, 0, 128, io));
+    assert(cache.load(current, requested, nullptr, nullptr, nullptr, -1, true, false, 0, 0.9f, 0, 128, io));
     assert(restored);
     assert(current.tokens.size() == 2);
 }
@@ -229,7 +229,7 @@ static void prompt_cache_does_not_restore_just_admitted_live_state() {
         },
     };
     server_tokens requested(llama_tokens {1, 2, 9}, false);
-    assert(cache.load(current, requested, 0, 1, io, admitted));
+    assert(cache.load(current, requested, nullptr, nullptr, nullptr, -1, true, false, 0, 0.9f, 0, 1, io, admitted));
     assert(!restored);
     assert(cache.restore_attempts == 0);
     assert(current.tokens.size() == 4);
@@ -464,7 +464,7 @@ static void prompt_cache_snapshot_restore_evict_stress() {
 
         server_prompt destination;
         server_tokens requested(llama_tokens {i + 1, i + 20001, i + 40001}, false);
-        assert(cache.load(destination, requested, 0, 1, io));
+        assert(cache.load(destination, requested, nullptr, nullptr, nullptr, -1, true, false, 0, 0.9f, 0, 1, io));
         assert(destination.tokens.size() == source.tokens.size());
         assert(logical_state == uint8_t(i));
         assert(cache.states.size() == 1);
@@ -529,14 +529,10 @@ int main() {
         assert(prompt.checkpoints.front().data_tgt.storage_id() != shared_storage);
         assert(clone.checkpoints.front().data_tgt.size() == 16);
 
-        server_prompt_cache_state state {
-            /*.prompt =*/ std::move(prompt),
-            /*.data =*/ {
-                /*.main =*/ std::vector<uint8_t>(64),
-                /*.drft =*/ std::vector<uint8_t>(32),
-                /*.spec =*/ { },
-            },
-        };
+        server_prompt_cache_state state;
+        state.prompt = std::move(prompt);
+        state.data.main.resize(64);
+        state.data.drft.resize(32);
         assert(state.accounted_size() == 128);
     }
 
