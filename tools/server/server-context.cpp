@@ -3978,12 +3978,16 @@ private:
                                 slot.prompt_cache_reason = "disabled";
                             }
                             // disk-restored KV on checkpoint-requiring models is only valid up to the chosen
-                            // checkpoint; cap n_past so rows above it are reprocessed in place
-                            if (prompt_cache && prompt_cache->disk_restore_predicted_reuse >= 0 &&
-                                n_past > prompt_cache->disk_restore_predicted_reuse) {
-                                SLT_TRC(slot, "capping disk-restored n_past to checkpoint reuse (%d -> %d)\n",
-                                        n_past, (int) prompt_cache->disk_restore_predicted_reuse);
-                                n_past = prompt_cache->disk_restore_predicted_reuse;
+                            // checkpoint; cap n_past so rows above it are reprocessed in place. The prediction belongs
+                            // to this launch only, so clear it after use: launches that skip load() (live incremental
+                            // turns) must not inherit a stale cap from an earlier disk restore.
+                            if (prompt_cache && prompt_cache->disk_restore_predicted_reuse >= 0) {
+                                if (n_past > prompt_cache->disk_restore_predicted_reuse) {
+                                    SLT_TRC(slot, "capping disk-restored n_past to checkpoint reuse (%d -> %d)\n",
+                                            n_past, (int) prompt_cache->disk_restore_predicted_reuse);
+                                    n_past = prompt_cache->disk_restore_predicted_reuse;
+                                }
+                                prompt_cache->disk_restore_predicted_reuse = -1;
                             }
 
                             llama_pos pos_next = slot.prompt.tokens.pos_next(n_past);

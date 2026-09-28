@@ -350,3 +350,45 @@ def test_disk_cache_does_not_load_when_prompt_cache_disabled(tmp_path):
     timings = completion(server, LONG_PROMPT, cache_prompt=False)
     assert timings["cache_n"] == 0
     assert metadata.stat().st_mtime_ns == mtime_before
+
+
+def test_disk_cache_cap_not_sticky_across_live_launches(tmp_path, monkeypatch):
+    # A disk restore on a checkpoint-requiring model caps n_past to the entry's predicted
+    # reuse; that cap belongs only to the launch that restored. Subsequent live incremental
+    # launches in the same session must not inherit the stale prediction.
+    monkeypatch.setenv("LLAMA_ARG_LOG_VERBOSITY", "4")
+
+    server = make_server()
+    server.n_predict = 1
+    server.cache_ram = 0
+    server.cache_dir = str(tmp_path)
+    server.cache_dir_max = 256
+    server.log_path = str(tmp_path / "server.log")
+    server.start()
+
+    cached_tokens = tokenize(server, LONG_PROMPT)
+    suffix_tokens = tokenize(server, "The capped story continues on the next page.", add_special=False)
+    extended_tokens = cached_tokens + suffix_tokens
+    lcp = common_prefix_length(cached_tokens, extended_tokens)
+    assert lcp == len(cached_tokens)
+
+    completion(server, cached_tokens, 0)
+    completion(server, "Move the cap test prompt into the disk cache.", 1)
+    server.stop()
+    server.start()
+
+    timings_restore = completion(server, cached_tokens, 0)
+    log = (tmp_path / "server.log").read_text()
+    predicted = re.findall(r"found better prompt .*effective_prefix_reuse = (\d+)", log)
+    assert predicted
+    cap = int(predicted[-1])
+    # the restore launch is genuinely capped for this model/prompt; without that gap the
+    # sticky prediction would be invisible and nothing below could regress on it
+    assert cap < lcp
+
+    timings_live = completion(server, extended_tokens, 0)
+    server.stop()
+
+    # with a stale sticky cap this launch was re-capped to `cap`; live memory covers the
+    # full prefix, so the restore prediction must not apply to it
+    assert timings_live["cache_n"] == lcp

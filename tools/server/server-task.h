@@ -940,7 +940,7 @@ struct server_prompt_cache {
     uint64_t restore_attempts = 0;
     uint64_t restore_successes = 0;
     uint64_t restore_failures = 0;
-    // prefix reuse predicted for the last successful disk restore, -1 if none
+    // prefix reuse predicted for this launch's disk restore; consumed and reset to -1 after use
     int64_t disk_restore_predicted_reuse = -1;
 
     // Payload-only accounting: serialized target/draft/speculative bytes and
